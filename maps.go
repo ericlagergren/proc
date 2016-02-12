@@ -13,10 +13,10 @@ import (
 )
 
 const (
-	None  = 0         // 0x0
-	Read  = 1 << iota // 0x1
-	Write             // 0x2
-	Exec              // 0x4
+	None  = 0x0
+	Read  = 0x1
+	Write = 0x2
+	Exec  = 0x4
 )
 
 // Map is a mapped memory region, found in /proc/$$/maps
@@ -36,6 +36,12 @@ type Map struct {
 	// include [stack], [heap], and [vsdo]. See related methods.
 	Path string
 }
+
+const (
+	Stack = "[stack]"
+	Heap  = "[heap]"
+	VSDO  = "[vsdo]"
+)
 
 // IsStack returns true if the mapping points to the stack.
 func (m Map) IsStack() bool {
@@ -72,58 +78,62 @@ func (m Map) ThreadID() (int, error) {
 	return strconv.Atoi(m.Path[i+1 : len(m.Path)-1])
 }
 
+// read returns a boolean indicating whether or not the read was
+// successful.
+func (m *Map) read(p []byte) bool {
+	if p == nil || len(p) == 0 {
+		return false
+	}
+
+	parts := bytes.Split(p, []byte{' '})
+
+	// 6 parts minimum, but no max since sometimes
+	// there's a big space between inode and path.
+	if len(parts) < 6 {
+		return false
+	}
+
+	// Convert the address ranges from hex to uintptr.
+	addr := bytes.Split(parts[0], []byte{'-'})
+	m.Start = hexToUintptr(addr[0])
+	m.End = hexToUintptr(addr[1])
+
+	// Convert 'rwxp' to permissions bitmask.
+	for _, c := range parts[1] {
+		switch c {
+		case 'r':
+			m.Perms |= Read
+		case 'w':
+			m.Perms |= Write
+		case 'x':
+			m.Perms |= Exec
+
+		// No case 's' because it defaults to false.
+		case 'p':
+			m.Private = true
+		}
+	}
+
+	m.Offset = hexToUintptr(parts[2])
+
+	// Split dev into Major:Minor parts.
+	dev := bytes.Split(parts[3], []byte{':'})
+	m.Dev.Maj = parseUint(dev[0])
+	m.Dev.Min = parseUint(dev[1])
+
+	m.Inode = parseUint(parts[4])
+	m.Path = string(parts[len(parts)-1])
+	return true
+}
+
 // ParseMaps parses /proc/$$/maps into a useable data structure.
 func ParseMaps() (maps []Map) {
 
-	// filename is "/proc/$$/maps"
-	file := "/proc/" + strconv.Itoa(os.Getpid()) + "/maps"
-	lines := bytes.Split(slurp(file), []byte{'\n'})
+	lines := bytes.Split(slurp(filename()), []byte{'\n'})
 
 	var m Map
 	for _, line := range lines {
-		if line == nil || len(line) == 0 {
-			continue
-		}
-
-		parts := bytes.Split(line, []byte{' '})
-
-		// 6 parts minimum, but no max since sometimes
-		// there's a big space between inode and path.
-		if len(parts) < 6 {
-			return nil
-		}
-
-		// Convert the address ranges from hex to uintptr.
-		addr := bytes.Split(parts[0], []byte{'-'})
-		m.Start = hexToUintptr(addr[0])
-		m.End = hexToUintptr(addr[1])
-
-		// Convert 'rwxp' to permissions bitmask.
-		for _, c := range parts[1] {
-			switch c {
-			case 'r':
-				m.Perms |= Read
-			case 'w':
-				m.Perms |= Write
-			case 'x':
-				m.Perms |= Exec
-
-			// No case 's' because it defaults to false.
-			case 'p':
-				m.Private = true
-			}
-		}
-
-		m.Offset = hexToUintptr(parts[2])
-
-		// Split dev into Major:Minor parts.
-		dev := bytes.Split(parts[3], []byte{':'})
-		m.Dev.Maj = parseUint(dev[0])
-		m.Dev.Min = parseUint(dev[1])
-
-		m.Inode = parseUint(parts[4])
-		m.Path = string(parts[len(parts)-1])
-
+		m.read(line)
 		maps = append(maps, m)
 	}
 
@@ -179,4 +189,8 @@ func parseUint(b []byte) (n uint64) {
 		n *= 10
 	}
 	return n
+}
+
+func filename() string {
+	return "/proc/" + strconv.Itoa(os.Getpid()) + "/maps"
 }
