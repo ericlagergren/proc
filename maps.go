@@ -42,6 +42,7 @@ const (
 	Heap     = "[heap]"
 	VSDO     = "[vsdo]"
 	VSyscall = "[vsyscall]"
+	VVar     = "[vvar]"
 )
 
 // IsStack returns true if the mapping points to the stack.
@@ -60,10 +61,16 @@ func (m Map) IsVSDO() bool {
 	return m.Path == VSDO
 }
 
-// IsVSyscall returns true if the mapping points to a syscall page mapped into
-// userspace.
+// IsVSyscall returns true if the mapping points to a page containing a kernel
+// syscall mapped into userspace.
 func (m Map) IsVSyscall() bool {
 	return m.Path == VSyscall
+}
+
+// IsVVar returns true if the mapping points to a page containing a kernel
+// variable mapped into userspace.
+func (m Map) IsVVar() bool {
+	return m.Path == VVar
 }
 
 // ErrVersion is returned from the ThreadID method if the mapping
