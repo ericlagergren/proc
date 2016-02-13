@@ -5,6 +5,7 @@ package proc
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
@@ -13,10 +14,20 @@ import (
 )
 
 const (
-	None  = 0x0
-	Read  = 0x1
-	Write = 0x2
-	Exec  = 0x4
+	None  Perms = 0x0
+	Read  Perms = 0x1
+	Write Perms = 0x2
+	Exec  Perms = 0x4
+
+	priv Perms = 0x8
+)
+
+const (
+	Stack    = "[stack]"
+	Heap     = "[heap]"
+	VSDO     = "[vsdo]"
+	VSyscall = "[vsyscall]"
+	VVar     = "[vvar]"
 )
 
 // Map is a mapped memory region, found in /proc/$$/maps
@@ -24,7 +35,7 @@ const (
 type Map struct {
 	Start   uintptr // Beginning memory address.
 	End     uintptr // Ending memory address.
-	Perms   uint8   // Memory protection bitmask.
+	Perms   Perms   // Memory protection bitmask.
 	Private bool    // true if the mapping is private (copy on write).
 	Offset  uintptr // Offset where mapping begins.
 	Dev     struct {
@@ -37,13 +48,38 @@ type Map struct {
 	Path string
 }
 
-const (
-	Stack    = "[stack]"
-	Heap     = "[heap]"
-	VSDO     = "[vsdo]"
-	VSyscall = "[vsyscall]"
-	VVar     = "[vvar]"
-)
+// Perms are mmap(2)'s memory prot bitmask.
+type Perms uint8
+
+func (p Perms) String() string {
+	b := [4]byte{'-', '-', '-', 's'}
+	if p&None == 0 {
+		if p&Read != 0 {
+			b[0] = 'r'
+		}
+		if p&Write != 0 {
+			b[1] = 'w'
+		}
+		if p&Exec != 0 {
+			b[2] = 'x'
+		}
+	}
+	if p&priv != 0 {
+		b[3] = 'p'
+	}
+	return string(b[:])
+}
+
+func (m Map) String() string {
+	perms := m.Perms
+	if m.Private {
+		perms |= priv
+	}
+	return fmt.Sprintf("%0.8x-%0.8x %s %0.8x %d:%d %d %s",
+		m.Start, m.End, perms, m.Offset,
+		m.Dev.Maj, m.Dev.Min, m.Inode, m.Path,
+	)
+}
 
 // IsStack returns true if the mapping points to the stack.
 func (m Map) IsStack() bool {
@@ -140,17 +176,18 @@ func (m *Map) read(p []byte) bool {
 	return true
 }
 
+var filename = "/proc/" + strconv.Itoa(os.Getpid()) + "/maps"
+
 // ParseMaps parses /proc/$$/maps into a useable data structure.
 func ParseMaps() (maps []Map) {
 
-	lines := bytes.Split(slurp(filename()), []byte{'\n'})
+	lines := bytes.Split(slurp(filename), []byte{'\n'})
 
 	var m Map
 	for _, line := range lines {
 		m.read(line)
 		maps = append(maps, m)
 	}
-
 	return maps
 }
 
@@ -172,6 +209,7 @@ func slurp(name string) []byte {
 // (I.e., that /proc/$$/maps won't produce a garbage value.)
 func hexToUintptr(b []byte) (n uintptr) {
 	for _, d := range b {
+		n *= 16
 		switch {
 		case '0' <= d && d <= '9':
 			n += uintptr(d - '0')
@@ -182,7 +220,6 @@ func hexToUintptr(b []byte) (n uintptr) {
 		default:
 			return 0
 		}
-		n *= 16
 	}
 	return n
 }
@@ -190,6 +227,7 @@ func hexToUintptr(b []byte) (n uintptr) {
 // parseUint parses b into a uint64. See hexToUintptr for more.
 func parseUint(b []byte) (n uint64) {
 	for _, d := range b {
+		n *= 10
 		switch {
 		case '0' <= d && d <= '9':
 			n += uint64(d - '0')
@@ -200,11 +238,6 @@ func parseUint(b []byte) (n uint64) {
 		default:
 			return 0
 		}
-		n *= 10
 	}
 	return n
-}
-
-func filename() string {
-	return "/proc/" + strconv.Itoa(os.Getpid()) + "/maps"
 }
