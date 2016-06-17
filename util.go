@@ -2,25 +2,6 @@
 
 package proc
 
-import (
-	"io/ioutil"
-	"log"
-	"os"
-)
-
-func slurp(name string) []byte {
-	file, err := os.Open(name)
-	if err != nil {
-		log.Fatalln(err)
-	}
-	defer file.Close()
-	buf, err := ioutil.ReadAll(file)
-	if err != nil {
-		log.Fatalln(err)
-	}
-	return buf
-}
-
 // hexToUintptr converts b into a uintptr.
 // It's optimized to assume the input will not be invalid.
 // (I.e., that /proc/$$/maps won't produce a garbage value.)
