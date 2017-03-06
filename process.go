@@ -3,9 +3,9 @@
 package proc
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
-	"io/ioutil"
 	"os"
 	"strconv"
 	"strings"
@@ -22,42 +22,41 @@ func NewProcess(pid int) Process {
 	}
 }
 
+// Process represents a running process.
 type Process struct {
 	prefix string
 	maps   string
 	exe    string
 }
 
-// ParseMaps parses /proc/$$/maps into a useable data structure.
+// ParseMaps parses the process' procfs mapping into a useable data structure.
 func (p Process) ParseMaps() (maps Mapping, err error) {
-	// TODO: slurp or use a reader? /proc/$$/maps shouldn't be large...
-	buf, err := ioutil.ReadFile(p.maps)
+	file, err := os.Open(p.maps)
 	if err != nil {
 		return nil, err
 	}
+	defer file.Close()
 
-	lines := bytes.Split(buf, []byte{'\n'})
+	s := bufio.NewScanner(file)
 
 	var m Map
-	for _, line := range lines {
-		if len(line) == 0 {
-			continue
-		}
+	for s.Scan() {
+		line := s.Bytes()
 
-		parts := bytes.Split(line, []byte{' '})
+		parts := bytes.SplitN(line, []byte{' '}, 6)
 
 		// 6 parts minimum, but no max since sometimes
 		// there's a big space between inode and path.
 		// Prior to 2.0 there was only 5, but I doubt anybody
 		// has a kernel from ~2004 that runs Go.
 		if len(parts) < 6 {
-			return maps, errors.New("proc.ParseMaps not enough portions.")
+			return maps, errors.New("proc.ParseMaps: not enough parts (kernel < 2.0?)")
 		}
 
 		// Convert the address ranges from hex to uintptr.
-		addr := bytes.Split(parts[0], []byte{'-'})
-		m.Start = hexToUintptr(addr[0])
-		m.End = hexToUintptr(addr[1])
+		lo, hi := splitOn(parts[0], '-')
+		m.Start = hexToUintptr(lo)
+		m.End = hexToUintptr(hi)
 
 		// Convert 'rwxp' to permissions bitmask.
 		for _, c := range parts[1] {
@@ -78,19 +77,19 @@ func (p Process) ParseMaps() (maps Mapping, err error) {
 		m.Offset = hexToUintptr(parts[2])
 
 		// Split dev into Major:Minor parts.
-		dev := bytes.Split(parts[3], []byte{':'})
-		m.Maj = parseUint(dev[0])
-		m.Min = parseUint(dev[1])
+		maj, min := splitOn(parts[3], ':')
+		m.Maj = parseUint(maj)
+		m.Min = parseUint(min)
 
 		m.Inode = parseUint(parts[4])
 		m.Path = string(parts[len(parts)-1])
 		m.Type = p.ParseType(m.Path)
 		maps = append(maps, m)
 	}
-	return maps, nil
+	return maps, s.Err()
 }
 
-// Find searches through /proc/$$/maps to the find the range that holds
+// Find searches through the process' mappings to the find the range that holds
 // pc. It returns the Map and a boolean indicating whether the Map was found.
 func (p Process) Find(pc uintptr) (m Map, ok bool) {
 	maps, err := ParseMaps()
@@ -127,18 +126,17 @@ func (p Process) ParseType(s string) Type {
 		}
 
 		// Fish out stack with thread IDs like [stack:1234]
-		if strings.HasPrefix(s, "[stack:") && s[len(s)-1] == ']' {
+		if strings.HasPrefix(s, "[stack:") && strings.HasSuffix(s, "]") {
 			return Stack
 		}
 	}
 
 	// Probably is a path.
 	// We can't use filepath.Ext here because if, for example, the path is:
-	// /usr/share/lib/libc.so.6
-	// filepath.Ext will return ".6" which is a false negative for a .so file.
+	// "/usr/share/lib/libc.so.6" filepath.Ext will return ".6" which is a
+	// false negative for a .so file.
 
-	if strings.HasSuffix(s, ".so") ||
-		strings.LastIndex(s, ".so.") > 0 {
+	if strings.HasSuffix(s, ".so") || strings.LastIndex(s, ".so.") > 0 {
 		return Lib
 	}
 
@@ -160,6 +158,7 @@ func (p Process) ParseType(s string) Type {
 	return Unknown
 }
 
+// ExePath returns the path of the process (executable).
 func (p Process) ExePath() (string, error) {
 	return os.Readlink(p.exe)
 }

@@ -2,6 +2,8 @@
 
 package proc
 
+import "bytes"
+
 // hexToUintptr converts b into a uintptr.
 // It's optimized to assume the input will not be invalid.
 // (I.e., that /proc/$$/maps won't produce a garbage value.)
@@ -38,4 +40,13 @@ func parseUint(b []byte) (n uint64) {
 		}
 	}
 	return n
+}
+
+// splitOn splits b in half on the first occurance of c.
+func splitOn(b []byte, c byte) (p1, p2 []byte) {
+	i := bytes.IndexByte(b, c)
+	if i < 0 {
+		return nil, nil
+	}
+	return b[:i], b[i+1:]
 }

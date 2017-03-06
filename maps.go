@@ -1,5 +1,6 @@
 // +build linux,amd64
 
+// Package proc provides parsing of procfs mappings.
 package proc
 
 import (
@@ -15,24 +16,20 @@ import (
 const proc = "/proc/"
 
 var (
-	prefix = proc + strconv.Itoa(os.Getpid())
-	dp     = Process{
+	prefix         = proc + strconv.Itoa(os.Getpid())
+	defaultProcess = Process{
 		prefix: prefix,
 		maps:   prefix + "/maps",
 		exe:    prefix + "/exe",
 	}
 )
 
-// mmaped region protections.
+// mmaped region protections and flags.
 const (
-	None  Perms = 0x0
-	Read  Perms = 0x1
-	Write Perms = 0x2
-	Exec  Perms = 0x4
-)
-
-// mmapped region flags.
-const (
+	None   Perms = 0x0
+	Read   Perms = 0x1
+	Write  Perms = 0x2
+	Exec   Perms = 0x4
 	Priv   Perms = 0x8
 	Shared Perms = 0x10
 )
@@ -62,9 +59,7 @@ func (m Map) String() string {
 	)
 }
 
-func (m Map) IsPrivate() bool {
-	return m.Perms&Priv != 0
-}
+func (m Map) IsPrivate() bool { return m.Perms&Priv != 0 }
 
 // ErrVersion indicates the mapping does not have a thread ID.
 // (Usually means the linux version is too old.)
@@ -89,13 +84,13 @@ func (m Map) ThreadID() (int, error) {
 
 // ParseMaps parses /proc/$$/maps into a useable data structure.
 func ParseMaps() (maps Mapping, err error) {
-	return dp.ParseMaps()
+	return defaultProcess.ParseMaps()
 }
 
 // Find searches through /proc/$$/maps to the find the range that holds
 // pc. It returns the Map and a boolean indicating whether the Map was found.
 func Find(pc uintptr) (m Map, ok bool) {
-	return dp.Find(pc)
+	return defaultProcess.Find(pc)
 }
 
 // Mprotect calls mprotect(2) on the mmapped region.
@@ -151,18 +146,24 @@ const (
 
 // ParseType parses s into a Type.
 func ParseType(s string) Type {
-	return dp.ParseType(s)
+	return defaultProcess.ParseType(s)
 }
 
 func (t Type) String() string {
 	if int(t) < len(typeStrings) {
 		return typeStrings[t]
 	}
-	return "unknown"
+	return typeStrings[0] // unknown
 }
 
 var typeStrings = [...]string{
-	"unknown", "data", "exe",
-	"[heap]", "lib", "[stack]",
-	"[vsdo]", "[vsyscall]", "[vvar]",
+	Unknown:  "unknown",
+	Data:     "data",
+	Exe:      "exe",
+	Heap:     "[heap]",
+	Lib:      "lib",
+	Stack:    "[stack]",
+	VSDO:     "[vsdo]",
+	VSyscall: "[vsyscall]",
+	VVar:     "[vvar]",
 }
